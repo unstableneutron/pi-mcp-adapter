@@ -7,6 +7,7 @@ import { buildProxyDescription, createDirectToolExecutor, resolveDirectTools } f
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
+import { renderProxyCall, renderDirectCall, renderResult } from "./render.js";
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
 
 /** Strip `$schema` so pi core's Ajv doesn't fail on unrecognized drafts (e.g. 2020-12). */
@@ -42,6 +43,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(stripSchemaDirective(spec.inputSchema) || { type: "object", properties: {} }),
+      renderCall: (args: Record<string, unknown>, theme: Parameters<typeof renderDirectCall>[2]) =>
+        renderDirectCall(spec.prefixedName, args, theme),
+      renderResult: renderResult,
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
     });
   }
@@ -168,6 +172,8 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
       action: Type.Optional(Type.String({ description: "Action: 'ui-messages' to retrieve prompts/intents from UI sessions" })),
     }),
+    renderCall: renderProxyCall,
+    renderResult: renderResult,
     async execute(_toolCallId, params: {
       tool?: string;
       args?: string;

@@ -9,6 +9,13 @@ import { loadMetadataCache } from "./metadata-cache.js";
 import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
 
+/** Strip `$schema` so pi core's Ajv doesn't fail on unrecognized drafts (e.g. 2020-12). */
+function stripSchemaDirective(schema: unknown): Record<string, unknown> | undefined {
+  if (!schema || typeof schema !== "object") return undefined;
+  const { $schema, ...rest } = schema as Record<string, unknown>;
+  return rest;
+}
+
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
@@ -34,7 +41,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
-      parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
+      parameters: Type.Unsafe<Record<string, unknown>>(stripSchemaDirective(spec.inputSchema) || { type: "object", properties: {} }),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
     });
   }

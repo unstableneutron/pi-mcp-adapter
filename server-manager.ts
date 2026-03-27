@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Writable } from "node:stream";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
@@ -79,12 +80,13 @@ export class McpServerManager {
         }
       }
 
+      const stderrOption = buildStderrOption(definition.debug, definition.stderrFilter);
       transport = new StdioClientTransport({
         command,
         args,
         env: resolveEnv(definition.env),
         cwd: definition.cwd,
-        stderr: definition.debug ? "inherit" : "ignore",
+        stderr: stderrOption,
       });
     } else if (definition.url) {
       // HTTP transport with fallback
@@ -244,6 +246,16 @@ export class McpServerManager {
     // delete() would then remove, orphaning the new server process.
     connection.status = "closed";
     this.connections.delete(name);
+
+    // Kill the entire process group so any child processes spawned by the
+    // MCP server (e.g. process-substitution subshells) are also cleaned up.
+    // Falls back gracefully if the pid is unavailable or already gone.
+    const pid = (connection.transport as unknown as { _process?: { pid?: number } })
+      ?._process?.pid;
+    if (pid) {
+      try { process.kill(-pid, "SIGTERM"); } catch { /* already gone */ }
+    }
+
     await connection.client.close().catch(() => {});
     await connection.transport.close().catch(() => {});
   }
@@ -288,6 +300,47 @@ export class McpServerManager {
     if (connection.inFlight > 0) return false;
     return (Date.now() - connection.lastUsedAt) > timeoutMs;
   }
+}
+
+/**
+ * Build the stderr option for StdioClientTransport.
+ *
+ * - debug=true  → "inherit"  (all stderr passes through to the parent)
+ * - stderrFilter → a Writable that forwards lines NOT matching any filter string
+ *   (keeps process management fully in-process, no bash wrapper needed)
+ * - default      → "ignore"
+ */
+function buildStderrOption(
+  debug?: boolean,
+  stderrFilter?: string[],
+): "inherit" | "ignore" | Writable {
+  if (debug) return "inherit";
+
+  if (stderrFilter?.length) {
+    const filters = stderrFilter;
+    let lineBuffer = "";
+    return new Writable({
+      write(chunk: Buffer, _encoding: string, callback: () => void) {
+        lineBuffer += chunk.toString();
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.length > 0 && !filters.some(f => line.includes(f))) {
+            process.stderr.write(line + "\n");
+          }
+        }
+        callback();
+      },
+      final(callback: () => void) {
+        if (lineBuffer.length > 0 && !filters.some(f => lineBuffer.includes(f))) {
+          process.stderr.write(lineBuffer + "\n");
+        }
+        callback();
+      },
+    });
+  }
+
+  return "ignore";
 }
 
 /**

@@ -280,7 +280,8 @@ export interface ServerEntry {
   // Direct tool registration
   directTools?: boolean | string[];
   // Debug
-  debug?: boolean;  // Show server stderr (default: false)
+  debug?: boolean;        // Show server stderr (default: false)
+  stderrFilter?: string[]; // Suppress stderr lines containing any of these substrings (in-process, no bash wrapper needed)
 }
 
 // Settings
